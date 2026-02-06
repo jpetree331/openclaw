@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Use pnpm 10 for this repo (avoids ERR_INVALID_THIS with Node 20+).
+# Run: ./pnpmw install   or   ./pnpmw run build
+exec npx pnpm@10.23.0 "$@"

@@ -81,3 +81,7 @@ USER.md
 .agent/*.json
 !.agent/workflows/
 local/
+
+# Drive Playground (Google OAuth)
+scripts/drive_playground/credentials.json
+scripts/drive_playground/token.json
