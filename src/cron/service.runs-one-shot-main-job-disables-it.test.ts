@@ -448,16 +448,15 @@ describe("CronService", () => {
 
     await cron.start();
 
-    await expect(
-      cron.add({
-        name: "bad combo (main/agentTurn)",
-        enabled: true,
-        schedule: { kind: "every", everyMs: 1000 },
-        sessionTarget: "main",
-        wakeMode: "next-heartbeat",
-        payload: { kind: "agentTurn", message: "nope" },
-      }),
-    ).rejects.toThrow(/main cron jobs require/);
+    // main+agentTurn is valid; add succeeds (runMainAgentJob is optional; gateway supplies it).
+    await cron.add({
+      name: "main agentTurn (valid)",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 1000 },
+      sessionTarget: "main",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "agentTurn", message: "run in main" },
+    });
 
     await expect(
       cron.add({
@@ -474,7 +473,7 @@ describe("CronService", () => {
     await store.cleanup();
   });
 
-  it("skips invalid main jobs with agentTurn payloads from disk", async () => {
+  it("main+agentTurn from disk finishes with error when runMainAgentJob not provided", async () => {
     const store = await makeStorePath();
     const enqueueSystemEvent = vi.fn();
     const requestHeartbeatNow = vi.fn();
@@ -494,7 +493,7 @@ describe("CronService", () => {
             schedule: { kind: "at", at: new Date(atMs).toISOString() },
             sessionTarget: "main",
             wakeMode: "now",
-            payload: { kind: "agentTurn", message: "bad" },
+            payload: { kind: "agentTurn", message: "run in main" },
             state: {},
           },
         ],
@@ -508,6 +507,7 @@ describe("CronService", () => {
       enqueueSystemEvent,
       requestHeartbeatNow,
       runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" })),
+      // runMainAgentJob omitted: only gateway supplies it; CLI/test runners do not.
     });
 
     await cron.start();

@@ -3,7 +3,7 @@ import type { CoreConfig } from "./core-bridge.js";
 import type { VoiceCallProvider } from "./providers/base.js";
 import type { TelephonyTtsRuntime } from "./telephony-tts.js";
 import { resolveVoiceCallConfig, validateProviderConfig } from "./config.js";
-import { CallManager } from "./manager.js";
+import { CallManager, getVoiceCallStorePath } from "./manager.js";
 import { MockProvider } from "./providers/mock.js";
 import { PlivoProvider } from "./providers/plivo.js";
 import { TelnyxProvider } from "./providers/telnyx.js";
@@ -40,7 +40,10 @@ function isLoopbackBind(bind: string | undefined): boolean {
   return bind === "127.0.0.1" || bind === "::1" || bind === "localhost";
 }
 
-function resolveProvider(config: VoiceCallConfig): VoiceCallProvider {
+function resolveProvider(
+  config: VoiceCallConfig,
+  opts?: { streamTokenStorePath?: string },
+): VoiceCallProvider {
   const allowNgrokFreeTierLoopbackBypass =
     config.tunnel?.provider === "ngrok" &&
     isLoopbackBind(config.serve?.bind) &&
@@ -71,6 +74,7 @@ function resolveProvider(config: VoiceCallConfig): VoiceCallProvider {
           skipVerification: config.skipSignatureVerification,
           streamPath: config.streaming?.enabled ? config.streaming.streamPath : undefined,
           webhookSecurity: config.webhookSecurity,
+          streamTokenStorePath: opts?.streamTokenStorePath,
         },
       );
     case "plivo":
@@ -118,17 +122,19 @@ export async function createVoiceCallRuntime(params: {
     throw new Error(`Invalid voice-call config: ${validation.errors.join("; ")}`);
   }
 
-  const provider = resolveProvider(config);
+  const streamTokenStorePath = getVoiceCallStorePath(config);
+  const provider = resolveProvider(config, { streamTokenStorePath });
   const manager = new CallManager(config);
   const webhookServer = new VoiceCallWebhookServer(config, manager, provider, coreConfig);
 
   const localUrl = await webhookServer.start();
 
-  // Determine public URL - priority: config.publicUrl > tunnel > legacy tailscale
+  // Determine public URL: start tunnel when configured (so we have a live tunnel);
+  // otherwise use config.publicUrl or Tailscale.
   let publicUrl: string | null = config.publicUrl ?? null;
   let tunnelResult: TunnelResult | null = null;
 
-  if (!publicUrl && config.tunnel?.provider && config.tunnel.provider !== "none") {
+  if (config.tunnel?.provider && config.tunnel.provider !== "none") {
     try {
       tunnelResult = await startTunnel({
         provider: config.tunnel.provider,
@@ -137,7 +143,10 @@ export async function createVoiceCallRuntime(params: {
         ngrokAuthToken: config.tunnel.ngrokAuthToken,
         ngrokDomain: config.tunnel.ngrokDomain,
       });
-      publicUrl = tunnelResult?.publicUrl ?? null;
+      const tunnelUrl = tunnelResult?.publicUrl ?? null;
+      if (tunnelUrl) {
+        publicUrl = tunnelUrl;
+      }
     } catch (err) {
       log.error(
         `[voice-call] Tunnel setup failed: ${err instanceof Error ? err.message : String(err)}`,

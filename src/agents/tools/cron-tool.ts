@@ -257,10 +257,12 @@ SCHEDULE TYPES (schedule.kind):
 ISO timestamps without an explicit timezone are treated as UTC.
 
 PAYLOAD TYPES (payload.kind):
-- "systemEvent": Injects text as system event into session
+- "systemEvent": Injects text as system event into session (main only)
   { "kind": "systemEvent", "text": "<message>" }
-- "agentTurn": Runs agent with message (isolated sessions only)
+- "agentTurn": Runs agent with message (main or isolated)
   { "kind": "agentTurn", "message": "<prompt>", "model": "<optional>", "thinking": "<optional>", "timeoutSeconds": <optional> }
+  - sessionTarget=main: same persona/context/memory as your main thread; no delivery config.
+  - sessionTarget=isolated: dedicated session cron:<jobId>; delivery config available.
 
 DELIVERY (isolated-only, top-level):
   { "mode": "none|announce", "channel": "<optional>", "to": "<optional>", "bestEffort": <optional-bool> }
@@ -268,9 +270,9 @@ DELIVERY (isolated-only, top-level):
   - If the task needs to send to a specific chat/recipient, set delivery.channel/to here; do not call messaging tools inside the run.
 
 CRITICAL CONSTRAINTS:
-- sessionTarget="main" REQUIRES payload.kind="systemEvent"
+- sessionTarget="main" allows payload.kind="systemEvent" or "agentTurn"
 - sessionTarget="isolated" REQUIRES payload.kind="agentTurn"
-Default: prefer isolated agentTurn jobs unless the user explicitly wants a main-session system event.
+Default: prefer isolated agentTurn jobs unless the user explicitly wants main-session (system event or agent turn).
 
 WAKE MODES (for wake action):
 - "next-heartbeat" (default): Wake on next heartbeat

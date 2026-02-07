@@ -81,12 +81,12 @@ Think of a cron job as: **when** to run + **what** to do.
    - If your ISO timestamp omits a timezone, it is treated as **UTC**.
 
 2. **Choose where it runs**
-   - `sessionTarget: "main"` → run during the next heartbeat with main context.
+   - `sessionTarget: "main"` → run in the main session (system event + heartbeat, or a full agent turn in main).
    - `sessionTarget: "isolated"` → run a dedicated agent turn in `cron:<jobId>`.
 
 3. **Choose the payload**
-   - Main session → `payload.kind = "systemEvent"`
-   - Isolated session → `payload.kind = "agentTurn"`
+   - Main session → `payload.kind = "systemEvent"` (enqueue text, then heartbeat) or `payload.kind = "agentTurn"` (full agent turn in main; same persona/context/memory).
+   - Isolated session → `payload.kind = "agentTurn"` only.
 
 Optional: one-shot jobs (`schedule.kind = "at"`) delete after success by default. Set
 `deleteAfterRun: false` to keep them (they will disable after success).
@@ -120,16 +120,20 @@ local timezone is used.
 
 ### Main vs isolated execution
 
-#### Main session jobs (system events)
+#### Main session jobs
 
-Main jobs enqueue a system event and optionally wake the heartbeat runner.
-They must use `payload.kind = "systemEvent"`.
+Main jobs run in the same session as your normal chats (one persona, shared context and memory).
+They support two payload kinds:
 
-- `wakeMode: "now"` (default): event triggers an immediate heartbeat run.
-- `wakeMode: "next-heartbeat"`: event waits for the next scheduled heartbeat.
+- **`payload.kind = "systemEvent"`** — Enqueue a text blob and optionally wake the heartbeat runner.
+  - `wakeMode: "next-heartbeat"` (default): event waits for the next scheduled heartbeat.
+  - `wakeMode: "now"`: event triggers an immediate heartbeat run.
+  - Best when you want the normal heartbeat prompt plus the injected text. See [Heartbeat](/gateway/heartbeat).
 
-This is the best fit when you want the normal heartbeat prompt + main-session context.
-See [Heartbeat](/gateway/heartbeat).
+- **`payload.kind = "agentTurn"`** — Run a full agent turn in the main session (same as isolated, but in main).
+  - Uses the same persona, memory, and context as your main thread.
+  - No delivery config (reply stays in main). `wakeMode` does not apply to the turn itself.
+  - Best when you want scheduled work to be done by the same “who” you talk to, with full agency.
 
 #### Isolated jobs (dedicated cron sessions)
 
@@ -155,7 +159,7 @@ your main chat history.
 Two payload kinds are supported:
 
 - `systemEvent`: main-session only, routed through the heartbeat prompt.
-- `agentTurn`: isolated-session only, runs a dedicated agent turn.
+- `agentTurn`: runs a dedicated agent turn; use with `sessionTarget: "main"` (same persona/context) or `sessionTarget: "isolated"` (separate session `cron:<jobId>`).
 
 Common `agentTurn` fields:
 
@@ -287,7 +291,7 @@ Notes:
 - `schedule.kind`: `at` (`at`), `every` (`everyMs`), or `cron` (`expr`, optional `tz`).
 - `schedule.at` accepts ISO 8601 (timezone optional; treated as UTC when omitted).
 - `everyMs` is milliseconds.
-- `sessionTarget` must be `"main"` or `"isolated"` and must match `payload.kind`.
+- `sessionTarget` must be `"main"` or `"isolated"`. Main accepts `payload.kind` `systemEvent` or `agentTurn`; isolated accepts `agentTurn` only.
 - Optional fields: `agentId`, `description`, `enabled`, `deleteAfterRun` (defaults to true for `at`),
   `delivery`.
 - `wakeMode` defaults to `"now"` when omitted.

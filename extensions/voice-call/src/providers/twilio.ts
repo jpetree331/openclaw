@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { TwilioConfig, WebhookSecurityConfig } from "../config.js";
 import type { MediaStreamHandler } from "../media-stream.js";
 import type { TelephonyTtsProvider } from "../telephony-tts.js";
@@ -40,7 +42,11 @@ export interface TwilioProviderOptions {
   skipVerification?: boolean;
   /** Webhook security options (forwarded headers/allowlist) */
   webhookSecurity?: WebhookSecurityConfig;
+  /** If set, stream auth tokens are persisted here so stream validation works across reloads. */
+  streamTokenStorePath?: string;
 }
+
+const STREAM_TOKEN_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export class TwilioProvider implements VoiceCallProvider {
   readonly name = "twilio" as const;
@@ -99,6 +105,58 @@ export class TwilioProvider implements VoiceCallProvider {
 
     this.deleteStoredTwiml(callIdMatch[1]);
     this.streamAuthTokens.delete(providerCallId);
+    this.deletePersistedStreamToken(providerCallId);
+  }
+
+  private streamTokenFilePath(callSid: string): string | null {
+    const base = this.options.streamTokenStorePath;
+    if (!base) {
+      return null;
+    }
+    return path.join(base, "stream-tokens", `${callSid}.token`);
+  }
+
+  private persistStreamToken(callSid: string, token: string): void {
+    const filePath = this.streamTokenFilePath(callSid);
+    if (!filePath) {
+      return;
+    }
+    try {
+      const dir = path.dirname(filePath);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(filePath, token, "utf8");
+    } catch (err) {
+      console.warn(`[voice-call] Failed to persist stream token for ${callSid}:`, err);
+    }
+  }
+
+  private deletePersistedStreamToken(callSid: string): void {
+    const filePath = this.streamTokenFilePath(callSid);
+    if (!filePath) {
+      return;
+    }
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      // Ignore missing file
+    }
+  }
+
+  private getPersistedStreamToken(callSid: string): string | null {
+    const filePath = this.streamTokenFilePath(callSid);
+    if (!filePath) {
+      return null;
+    }
+    try {
+      const stat = fs.statSync(filePath);
+      if (Date.now() - stat.mtimeMs > STREAM_TOKEN_TTL_MS) {
+        fs.unlinkSync(filePath);
+        return null;
+      }
+      return fs.readFileSync(filePath, "utf8");
+    } catch {
+      return null;
+    }
   }
 
   constructor(config: TwilioConfig, options: TwilioProviderOptions = {}) {
@@ -144,8 +202,17 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   isValidStreamToken(callSid: string, token?: string): boolean {
-    const expected = this.streamAuthTokens.get(callSid);
-    if (!expected || !token) {
+    if (!token) {
+      return false;
+    }
+    let expected = this.streamAuthTokens.get(callSid);
+    if (!expected) {
+      expected = this.getPersistedStreamToken(callSid);
+      if (expected) {
+        this.streamAuthTokens.set(callSid, expected);
+      }
+    }
+    if (!expected) {
       return false;
     }
     if (expected.length !== token.length) {
@@ -408,6 +475,7 @@ export class TwilioProvider implements VoiceCallProvider {
     }
     const token = crypto.randomBytes(16).toString("base64url");
     this.streamAuthTokens.set(callSid, token);
+    this.persistStreamToken(callSid, token);
     return token;
   }
 
@@ -472,6 +540,9 @@ export class TwilioProvider implements VoiceCallProvider {
     const result = await this.apiRequest<TwilioCallResponse>("/Calls.json", params);
 
     this.callWebhookUrls.set(result.sid, url.toString());
+    // Pre-register stream token so it is set before "answered" webhook; avoids race where
+    // stream connects before we've returned TwiML and validates correctly.
+    this.getStreamAuthToken(result.sid);
 
     return {
       providerCallId: result.sid,
@@ -563,6 +634,12 @@ export class TwilioProvider implements VoiceCallProvider {
     await handler.queueTts(streamSid, async (signal) => {
       // Generate audio with core TTS (returns mu-law at 8kHz)
       const muLawAudio = await ttsProvider.synthesizeForTelephony(text);
+      if (muLawAudio.length === 0) {
+        console.warn(`[voice-call] TTS produced 0 bytes for stream ${streamSid}; no audio will play`);
+        return;
+      }
+      const chunkCount = Math.ceil(muLawAudio.length / CHUNK_SIZE);
+      console.log(`[voice-call] Playing TTS: ${muLawAudio.length} bytes (${chunkCount} chunks) for stream ${streamSid}`);
       for (const chunk of chunkAudio(muLawAudio, CHUNK_SIZE)) {
         if (signal.aborted) {
           break;

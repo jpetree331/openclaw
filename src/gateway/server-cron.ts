@@ -11,7 +11,7 @@ import { runHeartbeatOnce } from "../infra/heartbeat-runner.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { getChildLogger } from "../logging.js";
-import { normalizeAgentId } from "../routing/session-key.js";
+import { normalizeAgentId, normalizeMainKey } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
 
 export type GatewayCronState = {
@@ -84,6 +84,19 @@ export function buildGatewayCronService(params: {
         message,
         agentId,
         sessionKey: `cron:${job.id}`,
+        lane: "cron",
+      });
+    },
+    runMainAgentJob: async ({ job, message }) => {
+      const { agentId, cfg: runtimeConfig } = resolveCronAgent(job.agentId);
+      const mainKey = normalizeMainKey(runtimeConfig?.session?.mainKey);
+      return await runCronIsolatedAgentTurn({
+        cfg: runtimeConfig,
+        deps: params.deps,
+        job,
+        message,
+        agentId,
+        sessionKey: mainKey,
         lane: "cron",
       });
     },

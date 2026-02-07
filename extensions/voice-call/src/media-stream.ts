@@ -186,13 +186,19 @@ export class MediaStreamHandler {
 
     this.sessions.set(streamSid, session);
 
-    // Notify connection BEFORE STT connect so TTS can work even if STT fails
-    this.config.onConnect?.(callSid, streamSid);
+    // Connect to OpenAI STT before accepting media so user speech is not dropped.
+    // If STT fails, we still allow the call (TTS/greeting works) but transcripts won't arrive.
+    try {
+      await sttSession.connect();
+    } catch (err) {
+      console.warn(
+        `[MediaStream] STT connection failed (TTS still works, user speech will not be transcribed):`,
+        err instanceof Error ? err.message : err,
+      );
+    }
 
-    // Connect to OpenAI STT (non-blocking, log errors but don't fail the call)
-    sttSession.connect().catch((err) => {
-      console.warn(`[MediaStream] STT connection failed (TTS still works):`, err.message);
-    });
+    // Notify connection so TTS can route audio (greeting, then responses)
+    this.config.onConnect?.(callSid, streamSid);
 
     return session;
   }

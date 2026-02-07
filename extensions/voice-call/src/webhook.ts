@@ -72,16 +72,23 @@ export class VoiceCallWebhookServer {
     const streamConfig: MediaStreamConfig = {
       sttProvider,
       shouldAcceptStream: ({ callId, token }) => {
+        // Accept when token is valid (same process initiated the call and set the token)
+        if (this.provider.name === "twilio") {
+          const twilio = this.provider as TwilioProvider;
+          if (twilio.isValidStreamToken(callId, token)) {
+            return true;
+          }
+        }
         const call = this.manager.getCallByProviderCallId(callId);
         if (!call) {
           return false;
         }
+        // Fallback: accept stream for known call even if token missing/invalid (e.g. proxy
+        // strips query string). Prevents "An application error has occurred".
         if (this.provider.name === "twilio") {
-          const twilio = this.provider as TwilioProvider;
-          if (!twilio.isValidStreamToken(callId, token)) {
-            console.warn(`[voice-call] Rejecting media stream: invalid token for ${callId}`);
-            return false;
-          }
+          console.warn(
+            `[voice-call] Stream token invalid/missing for ${callId}; accepting stream for known call`,
+          );
         }
         return true;
       },
@@ -377,9 +384,16 @@ export class VoiceCallWebhookServer {
         return;
       }
 
-      if (result.text) {
+      if (result.text && result.text.trim()) {
         console.log(`[voice-call] AI response: "${result.text}"`);
-        await this.manager.speak(callId, result.text);
+        const speakResult = await this.manager.speak(callId, result.text);
+        if (!speakResult.success) {
+          console.error(`[voice-call] Failed to speak response: ${speakResult.error}`);
+        }
+      } else {
+        console.warn(
+          `[voice-call] AI returned no text (empty or whitespace); nothing to speak for call ${callId}`,
+        );
       }
     } catch (err) {
       console.error(`[voice-call] Auto-response error:`, err);

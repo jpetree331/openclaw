@@ -37,6 +37,11 @@ function resolveDefaultStoreBase(config: VoiceCallConfig, storePath?: string): s
   return existing;
 }
 
+/** Resolved voice-call store path (for provider token persistence). */
+export function getVoiceCallStorePath(config: VoiceCallConfig, storePath?: string): string {
+  return resolveDefaultStoreBase(config, storePath);
+}
+
 /**
  * Manages voice calls: state machine, persistence, and provider coordination.
  */

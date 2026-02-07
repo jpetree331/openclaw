@@ -47,6 +47,13 @@ export type CronServiceDeps = {
     sessionId?: string;
     sessionKey?: string;
   }>;
+  /** Run an agent turn in the main session (same shape as runIsolatedAgentJob). Used when sessionTarget=main and payload.kind=agentTurn. */
+  runMainAgentJob?: (params: { job: CronJob; message: string }) => Promise<{
+    status: "ok" | "error" | "skipped";
+    summary?: string;
+    outputText?: string;
+    error?: string;
+  }>;
   onEvent?: (evt: CronEvent) => void;
 };
 
