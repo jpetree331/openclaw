@@ -50,6 +50,16 @@ Common signatures:
 - `cron: timer tick failed` → scheduler tick crashed; inspect surrounding stack/log context.
 - `reason: not-due` in run output → manual run called without `--force` and job not due yet.
 
+### Cron and sleep / Gateway not running
+
+Cron runs **inside the Gateway process** using an in-process timer (not system cron). If the Gateway is not running at the scheduled time, jobs do not fire and no run history is written.
+
+- **Laptop slept:** When the Mac sleeps, the Gateway process is suspended. Node timers do not run while suspended, so 1 AM / 2 AM / 3 AM jobs will not run during sleep. After wake, the next timer tick (within about a minute) will run any due jobs and write run history. If you see no run history at all, the Gateway may have been stopped or killed (e.g. not restarted after wake, or in remote mode with no local Gateway).
+- **Gateway never running:** If you run in remote mode or the app/LaunchAgent was off, cron does not run locally.
+- **Recovery:** After starting (or restarting) the Gateway, the scheduler runs missed jobs once on startup and then continues normally. To run a job immediately: `openclaw cron run <job-id> --force`.
+
+Check that the Gateway was running: `openclaw gateway status`, and look for `cron: started` or `cron: running missed jobs after restart` in gateway logs.
+
 ## Cron fired but no delivery
 
 ```bash

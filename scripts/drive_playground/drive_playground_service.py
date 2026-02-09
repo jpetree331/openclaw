@@ -28,6 +28,16 @@ import os
 import io
 from pathlib import Path
 
+# Load .env from this directory so DRIVE_PLAYGROUND_* and GOOGLE_* can be set in a file (do not commit .env).
+SCRIPT_DIR = Path(__file__).resolve().parent
+_dotenv_path = SCRIPT_DIR / ".env"
+if _dotenv_path.exists():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(_dotenv_path)
+    except ImportError:
+        pass
+
 from fastapi import FastAPI, HTTPException, Header, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -48,7 +58,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/presentations",
 ]
-SCRIPT_DIR = Path(__file__).resolve().parent
 CREDENTIALS_FILE = SCRIPT_DIR / "credentials.json"
 TOKEN_FILE = SCRIPT_DIR / "token.json"
 # Folder path to resolve if DRIVE_PLAYGROUND_FOLDER_ID is not set (under My Drive root)
@@ -148,6 +157,22 @@ def get_playground_folder_id(service) -> str:
     return parent_id
 
 
+def _is_under_root(service, file_or_folder_id: str, root_id: str, seen: set | None = None) -> bool:
+    """Return True if file_or_folder_id is the root or a descendant of root_id (no cycles)."""
+    seen = seen or set()
+    if file_or_folder_id in seen:
+        return False
+    seen.add(file_or_folder_id)
+    if file_or_folder_id == root_id:
+        return True
+    try:
+        meta = service.files().get(fileId=file_or_folder_id, fields="parents").execute()
+    except Exception:
+        return False
+    parents = meta.get("parents") or []
+    return any(_is_under_root(service, p, root_id, seen) for p in parents)
+
+
 def require_api_key(x_api_key: str | None = Header(None), authorization: str | None = Header(None)):
     key = get_api_key()
     bearer = (authorization or "").strip().removeprefix("Bearer ")
@@ -173,13 +198,20 @@ def health():
 def list_files(
     x_api_key: str | None = Header(None),
     authorization: str | None = Header(None),
+    folder_id: str | None = Query(None),
     page_token: str | None = Query(None),
     page_size: int = Query(50, ge=1, le=100),
 ):
     require_api_key(x_api_key, authorization)
     service = get_drive_service()
-    folder_id = get_playground_folder_id(service)
-    q = f"'{folder_id}' in parents and trashed = false"
+    root_id = get_playground_folder_id(service)
+    list_folder_id = (folder_id or "").strip() or root_id
+    if list_folder_id != root_id and not _is_under_root(service, list_folder_id, root_id):
+        raise HTTPException(
+            status_code=403,
+            detail="folder_id must be the Playground root or a subfolder under it.",
+        )
+    q = f"'{list_folder_id}' in parents and trashed = false"
     result = (
         service.files()
         .list(
@@ -205,13 +237,12 @@ def read_file(
 ):
     require_api_key(x_api_key, authorization)
     service = get_drive_service()
-    folder_id = get_playground_folder_id(service)
+    root_id = get_playground_folder_id(service)
     meta = service.files().get(fileId=file_id, fields="id, name, mimeType, parents").execute()
-    parents = meta.get("parents") or []
-    if folder_id not in parents:
+    if not _is_under_root(service, file_id, root_id):
         raise HTTPException(
             status_code=403,
-            detail="File is not a direct child of the Playground folder. Use /list to get file IDs.",
+            detail="File is not in the Playground folder or its subfolders. Use /list to get file IDs.",
         )
     try:
         request = service.files().get_media(fileId=file_id)
@@ -329,7 +360,13 @@ def write_file(
 ):
     require_api_key(x_api_key, authorization)
     drive = get_drive_service()
-    folder_id = body.folder_id or get_playground_folder_id(drive)
+    root_id = get_playground_folder_id(drive)
+    folder_id = (body.folder_id or "").strip() or root_id
+    if folder_id != root_id and not _is_under_root(drive, folder_id, root_id):
+        raise HTTPException(
+            status_code=403,
+            detail="folder_id must be the Playground root or a subfolder under it.",
+        )
     existing = (
         drive.files()
         .list(

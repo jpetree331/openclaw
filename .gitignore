@@ -82,6 +82,8 @@ USER.md
 !.agent/workflows/
 local/
 
-# Drive Playground (Google OAuth)
+# Drive Playground (Google OAuth + local env)
+scripts/drive_playground/.env
+scripts/drive_playground/.venv
 scripts/drive_playground/credentials.json
 scripts/drive_playground/token.json

@@ -400,6 +400,27 @@ async function executeJobCore(
   sessionKey?: string;
 }> {
   if (job.sessionTarget === "main") {
+    // Main + agentTurn: run an agent turn in the main session (stateful agent).
+    if (job.payload.kind === "agentTurn") {
+      if (!state.deps.runMainAgentJob) {
+        return {
+          status: "skipped",
+          error: "main+agentTurn requires Gateway (runMainAgentJob not provided)",
+        };
+      }
+      const res = await state.deps.runMainAgentJob({
+        job,
+        message: job.payload.message,
+      });
+      return {
+        status: res.status,
+        error: res.error,
+        summary: res.summary,
+        sessionId: res.sessionId,
+        sessionKey: res.sessionKey,
+      };
+    }
+
     const text = resolveJobPayloadTextForMain(job);
     if (!text) {
       const kind = job.payload.kind;
@@ -408,7 +429,7 @@ async function executeJobCore(
         error:
           kind === "systemEvent"
             ? "main job requires non-empty systemEvent text"
-            : 'main job requires payload.kind="systemEvent"',
+            : 'main job requires payload.kind="systemEvent" or "agentTurn"',
       };
     }
     state.deps.enqueueSystemEvent(text, { agentId: job.agentId });

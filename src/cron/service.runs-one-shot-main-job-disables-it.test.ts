@@ -520,7 +520,9 @@ describe("CronService", () => {
 
     const jobs = await waitForJobs(cron, (items) => items[0]?.state.lastStatus === "skipped");
     expect(jobs[0]?.state.lastStatus).toBe("skipped");
-    expect(jobs[0]?.state.lastError).toMatch(/main job requires/i);
+    expect(jobs[0]?.state.lastError).toMatch(
+      /main\+agentTurn requires Gateway|runMainAgentJob not provided/i,
+    );
 
     cron.stop();
     await store.cleanup();
